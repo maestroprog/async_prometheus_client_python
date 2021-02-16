@@ -27,8 +27,8 @@ class MultiProcessCollector(object):
         if not path or not os.path.isdir(path):
             raise ValueError('env prometheus_multiproc_dir is not set or not a directory')
         self._path = path
-        if registry:
-            registry.register(self)
+        # if registry:
+        #     registry.register(self)
 
     @staticmethod
     def merge(files, accumulate=True):

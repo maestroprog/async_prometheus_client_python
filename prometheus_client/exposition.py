@@ -85,7 +85,7 @@ def start_wsgi_server(port, addr='', registry=REGISTRY):
 start_http_server = start_wsgi_server
 
 
-def generate_latest(registry=REGISTRY):
+async def generate_latest(registry=REGISTRY):
     """Returns the metrics from the registry in latest text format as a string."""
 
     def sample_line(line):
@@ -104,7 +104,7 @@ def generate_latest(registry=REGISTRY):
             line.name, labelstr, floatToGoString(line.value), timestamp)
 
     output = []
-    for metric in registry.collect():
+    for metric in await registry.collect():
         try:
             mname = metric.name
             mtype = metric.type

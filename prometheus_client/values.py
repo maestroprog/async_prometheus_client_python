@@ -3,6 +3,8 @@ from __future__ import unicode_literals
 import os
 from threading import Lock
 
+import aioredis
+
 from .mmap_dict import mmap_key, MmapedDict
 
 
@@ -27,6 +29,26 @@ class MutexValue(object):
         with self._lock:
             return self._value
 
+def RedisValueBuilder():
+    global redis_connection # type: aioredis.RedisConnection
+    redis = aioredis.Redis(redis_connection)
+
+    class RedisValue(object):
+        """A float stored in a Redis."""
+
+        def __init__(self, typ, metric_name, name, labelnames, labelvalues, **kwargs):
+            self._redis_key = f'{name}:{",".join(label + "=" + labelvalues[i] for i, label in enumerate(labelnames))}'
+
+        async def inc(self, amount):
+            await redis.incrby(self._redis_key, amount)
+
+        async def set(self, value):
+            await redis.set(self._redis_key, value)
+
+        async def get(self):
+            return await redis.get(self._redis_key) or 0.0
+
+    return RedisValue
 
 def MultiProcessValue(process_identifier=os.getpid):
     """Returns a MmapedValue class based on a process_identifier function.
@@ -102,13 +124,17 @@ def MultiProcessValue(process_identifier=os.getpid):
 
     return MmapedValue
 
+redis_connection = None # type: aioredis.RedisConnection
 
 def get_value_class():
+    global redis_connection
     # Should we enable multi-process mode?
     # This needs to be chosen before the first metric is constructed,
     # and as that may be in some arbitrary library the user/admin has
     # no control over we use an environment variable.
-    if 'prometheus_multiproc_dir' in os.environ:
+    if redis_connection is not None:
+        return RedisValueBuilder()
+    elif 'prometheus_multiproc_dir' in os.environ:
         return MultiProcessValue()
     else:
         return MutexValue

@@ -19,8 +19,8 @@ class PlatformCollector(object):
         self._metrics = [
             self._add_metric("python_info", "Python platform information", info)
         ]
-        if registry:
-            registry.register(self)
+        # if registry:
+            # registry.register(self)
 
     def collect(self):
         return self._metrics

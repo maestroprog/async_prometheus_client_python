@@ -1,5 +1,6 @@
 import copy
 from threading import Lock
+from typing import Awaitable
 
 from .metrics_core import Metric
 
@@ -20,10 +21,10 @@ class CollectorRegistry(object):
         self._target_info = {}
         self.set_target_info(target_info)
 
-    def register(self, collector):
+    async def register(self, collector):
         """Add a collector to the registry."""
         with self._lock:
-            names = self._get_names(collector)
+            names = await self._get_names(collector)
             duplicates = set(self._names_to_collectors).intersection(names)
             if duplicates:
                 raise ValueError(
@@ -40,7 +41,7 @@ class CollectorRegistry(object):
                 del self._names_to_collectors[name]
             del self._collector_to_names[collector]
 
-    def _get_names(self, collector):
+    async def _get_names(self, collector):
         """Get names of timeseries the collector produces and clashes with."""
         desc_func = None
         # If there's a describe function, use it.
@@ -63,13 +64,17 @@ class CollectorRegistry(object):
             'gaugehistogram': ['_bucket', '_gsum', '_gcount'],
             'info': ['_info'],
         }
-        for metric in desc_func():
+        desc = desc_func()
+        if isinstance(desc, Awaitable):
+            desc = await desc
+        for metric in desc:
             result.append(metric.name)
             for suffix in type_suffixes.get(metric.type, []):
                 result.append(metric.name + suffix)
         return result
 
-    def collect(self):
+    async def collect(self):
+        metrics = []
         """Yields metrics from the collectors in the registry."""
         collectors = None
         ti = None
@@ -78,10 +83,16 @@ class CollectorRegistry(object):
             if self._target_info:
                 ti = self._target_info_metric()
         if ti:
-            yield ti
+            metrics.append(ti)
         for collector in collectors:
-            for metric in collector.collect():
-                yield metric
+            collecting = collector.collect()
+            if isinstance(collecting, Awaitable):
+                metrics.extend(await collecting)
+            else:
+                metrics.extend(collecting)
+
+        return metrics
+
 
     def restricted_registry(self, names):
         """Returns object that only collects some metrics.
@@ -136,14 +147,14 @@ class CollectorRegistry(object):
         m.add_sample('target_info', self._target_info, 1)
         return m
 
-    def get_sample_value(self, name, labels=None):
+    async def get_sample_value(self, name, labels=None):
         """Returns the sample value, or None if not found.
 
         This is inefficient, and intended only for use in unittests.
         """
         if labels is None:
             labels = {}
-        for metric in self.collect():
+        for metric in await self.collect():
             for s in metric.samples:
                 if s.name == name and s.labels == labels:
                     return s.value

@@ -39,8 +39,8 @@ class ProcessCollector(object):
             self._btime = self._boot_time()
         except IOError:
             pass
-        if registry:
-            registry.register(self)
+        # if registry:
+        #     registry.register(self)
 
     def _boot_time(self):
         with open(os.path.join(self._proc, 'stat'), 'rb') as stat:

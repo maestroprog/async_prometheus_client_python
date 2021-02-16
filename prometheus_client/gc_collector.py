@@ -13,7 +13,7 @@ class GCCollector(object):
     def __init__(self, registry=REGISTRY):
         if not hasattr(gc, 'get_stats') or platform.python_implementation() != 'CPython':
             return
-        registry.register(self)
+        # registry.register(self)
 
     def collect(self):
         collected = CounterMetricFamily(

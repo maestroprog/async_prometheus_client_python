@@ -2,6 +2,7 @@ import sys
 from threading import Lock
 import time
 import types
+from typing import Awaitable
 
 from . import values  # retain this import style for testability
 from .context_managers import ExceptionCounter, InprogressTracker, Timer
@@ -74,9 +75,9 @@ class MetricWrapperBase(object):
     def describe(self):
         return [self._get_metric()]
 
-    def collect(self):
+    async def collect(self):
         metric = self._get_metric()
-        for suffix, labels, value in self._samples():
+        for suffix, labels, value in await self._samples():
             metric.add_sample(self._name + suffix, labels, value)
         return [metric]
 
@@ -94,7 +95,6 @@ class MetricWrapperBase(object):
                  namespace='',
                  subsystem='',
                  unit='',
-                 registry=REGISTRY,
                  labelvalues=None,
                  ):
         self._name = _build_full_name(self._type, name, namespace, subsystem, unit)
@@ -114,11 +114,6 @@ class MetricWrapperBase(object):
 
         if self._is_observable():
             self._metric_init()
-
-        if not self._labelvalues:
-            # Register the multi-wrapper parent metric, or if a label-less metric, the whole shebang.
-            if registry:
-                registry.register(self)
 
     def labels(self, *labelvalues, **labelkwargs):
         """Return the child for the given labelset.
@@ -186,21 +181,23 @@ class MetricWrapperBase(object):
         with self._lock:
             del self._metrics[labelvalues]
 
-    def _samples(self):
+    async def _samples(self):
         if self._is_parent():
-            return self._multi_samples()
+            return await self._multi_samples()
         else:
-            return self._child_samples()
+            return await self._child_samples()
 
-    def _multi_samples(self):
+    async def _multi_samples(self):
         with self._lock:
             metrics = self._metrics.copy()
+        result = []
         for labels, metric in metrics.items():
             series_labels = list(zip(self._labelnames, labels))
-            for suffix, sample_labels, value in metric._samples():
-                yield (suffix, dict(series_labels + list(sample_labels.items())), value)
+            for suffix, sample_labels, value in await metric._samples():
+                result.append((suffix, dict(series_labels + list(sample_labels.items())), value))
+        return result
 
-    def _child_samples(self):  # pragma: no cover
+    async def _child_samples(self):  # pragma: no cover
         raise NotImplementedError('_child_samples() must be implemented by %r' % self)
 
     def _metric_init(self):  # pragma: no cover
@@ -251,11 +248,13 @@ class Counter(MetricWrapperBase):
                                         self._labelvalues)
         self._created = time.time()
 
-    def inc(self, amount=1):
+    async def inc(self, amount=1):
         """Increment counter by the given amount."""
         if amount < 0:
             raise ValueError('Counters can only be incremented by non-negative amounts.')
-        self._value.inc(amount)
+        coro = self._value.inc(amount)
+        if isinstance(coro, Awaitable):
+            await coro
 
     def count_exceptions(self, exception=Exception):
         """Count exceptions in a block of code or function.
@@ -267,9 +266,12 @@ class Counter(MetricWrapperBase):
         self._raise_if_not_observable()
         return ExceptionCounter(self, exception)
 
-    def _child_samples(self):
+    async def _child_samples(self):
+        val = self._value.get()
+        if isinstance(val, Awaitable):
+            val = await val
         return (
-            ('_total', {}, self._value.get()),
+            ('_total', {}, val),
             ('_created', {}, self._created),
         )
 
@@ -321,7 +323,6 @@ class Gauge(MetricWrapperBase):
                  namespace='',
                  subsystem='',
                  unit='',
-                 registry=REGISTRY,
                  labelvalues=None,
                  multiprocess_mode='all',
                  ):
@@ -335,7 +336,6 @@ class Gauge(MetricWrapperBase):
             namespace=namespace,
             subsystem=subsystem,
             unit=unit,
-            registry=registry,
             labelvalues=labelvalues,
         )
         self._kwargs['multiprocess_mode'] = self._multiprocess_mode
@@ -346,17 +346,23 @@ class Gauge(MetricWrapperBase):
             multiprocess_mode=self._multiprocess_mode
         )
 
-    def inc(self, amount=1):
+    async def inc(self, amount=1):
         """Increment gauge by the given amount."""
-        self._value.inc(amount)
+        coro = self._value.inc(amount)
+        if isinstance(coro, Awaitable):
+            await coro
 
-    def dec(self, amount=1):
+    async def dec(self, amount=1):
         """Decrement gauge by the given amount."""
-        self._value.inc(-amount)
+        coro = self._value.inc(-amount)
+        if isinstance(coro, Awaitable):
+            await coro
 
-    def set(self, value):
+    async def set(self, value):
         """Set gauge to the given value."""
-        self._value.set(float(value))
+        coro = self._value.set(float(value))
+        if isinstance(coro, Awaitable):
+            await coro
 
     def set_to_current_time(self):
         """Set gauge to the current unixtime."""
@@ -392,8 +398,11 @@ class Gauge(MetricWrapperBase):
 
         self._child_samples = create_bound_method(samples, self)
 
-    def _child_samples(self):
-        return (('', {}, self._value.get()),)
+    async def _child_samples(self):
+        val = self._value.get()
+        if isinstance(val, Awaitable):
+            val = await val
+        return (('', {}, val),)
 
 
 class Summary(MetricWrapperBase):
@@ -435,10 +444,14 @@ class Summary(MetricWrapperBase):
         self._sum = values.ValueClass(self._type, self._name, self._name + '_sum', self._labelnames, self._labelvalues)
         self._created = time.time()
 
-    def observe(self, amount):
+    async def observe(self, amount):
         """Observe the given amount."""
-        self._count.inc(1)
-        self._sum.inc(amount)
+        coro1 = self._count.inc(1)
+        coro2 = self._sum.inc(amount)
+        if isinstance(coro1, Awaitable):
+            await coro1
+        if isinstance(coro2, Awaitable):
+            await coro2
 
     def time(self):
         """Time a block of code or function, and observe the duration in seconds.
@@ -448,10 +461,16 @@ class Summary(MetricWrapperBase):
         self._raise_if_not_observable()
         return Timer(self.observe)
 
-    def _child_samples(self):
+    async def _child_samples(self):
+        val1 = self._count.get()
+        val2 = self._sum.get()
+        if isinstance(val1, Awaitable):
+            val1 = await val1
+        if isinstance(val2, Awaitable):
+            val2 = await val2
         return (
-            ('_count', {}, self._count.get()),
-            ('_sum', {}, self._sum.get()),
+            ('_count', {}, val1),
+            ('_sum', {}, val2),
             ('_created', {}, self._created))
 
 
@@ -501,7 +520,6 @@ class Histogram(MetricWrapperBase):
                  namespace='',
                  subsystem='',
                  unit='',
-                 registry=REGISTRY,
                  labelvalues=None,
                  buckets=DEFAULT_BUCKETS,
                  ):
@@ -513,7 +531,6 @@ class Histogram(MetricWrapperBase):
             namespace=namespace,
             subsystem=subsystem,
             unit=unit,
-            registry=registry,
             labelvalues=labelvalues,
         )
         self._kwargs['buckets'] = buckets
@@ -544,12 +561,16 @@ class Histogram(MetricWrapperBase):
                 self._labelvalues + (floatToGoString(b),))
             )
 
-    def observe(self, amount):
+    async def observe(self, amount):
         """Observe the given amount."""
-        self._sum.inc(amount)
+        coro = self._sum.inc(amount)
+        if isinstance(coro, Awaitable):
+            await coro
         for i, bound in enumerate(self._upper_bounds):
             if amount <= bound:
-                self._buckets[i].inc(1)
+                coro = self._buckets[i].inc(1)
+                if isinstance(coro, Awaitable):
+                    await coro
                 break
 
     def time(self):
@@ -559,15 +580,21 @@ class Histogram(MetricWrapperBase):
         """
         return Timer(self.observe)
 
-    def _child_samples(self):
+    async def _child_samples(self):
         samples = []
         acc = 0
         for i, bound in enumerate(self._upper_bounds):
-            acc += self._buckets[i].get()
+            val = self._buckets[i].get()
+            if isinstance(val, Awaitable):
+                val = await val
+            acc += val
             samples.append(('_bucket', {'le': floatToGoString(bound)}, acc))
         samples.append(('_count', {}, acc))
         if self._upper_bounds[0] >= 0:
-            samples.append(('_sum', {}, self._sum.get()))
+            val = self._sum.get()
+            if isinstance(val, Awaitable):
+                val = await val
+            samples.append(('_sum', {}, val))
         samples.append(('_created', {}, self._created))
         return tuple(samples)
 
@@ -630,7 +657,6 @@ class Enum(MetricWrapperBase):
                  namespace='',
                  subsystem='',
                  unit='',
-                 registry=REGISTRY,
                  labelvalues=None,
                  states=None,
                  ):
@@ -641,7 +667,6 @@ class Enum(MetricWrapperBase):
             namespace=namespace,
             subsystem=subsystem,
             unit=unit,
-            registry=registry,
             labelvalues=labelvalues,
         )
         if name in labelnames:
