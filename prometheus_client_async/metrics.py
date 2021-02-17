@@ -1,8 +1,10 @@
 import sys
-from threading import Lock
 import time
 import types
+from threading import Lock
 from typing import Awaitable
+
+import aioredis
 
 from . import values  # retain this import style for testability
 from .context_managers import ExceptionCounter, InprogressTracker, Timer
@@ -10,8 +12,8 @@ from .metrics_core import (
     Metric, METRIC_LABEL_NAME_RE, METRIC_NAME_RE,
     RESERVED_METRIC_LABEL_NAME_RE,
 )
-from .registry import REGISTRY
 from .utils import floatToGoString, INF
+from .values import redis_connection
 
 if sys.version_info > (3,):
     unicode = str
@@ -103,6 +105,7 @@ class MetricWrapperBase(object):
         self._kwargs = {}
         self._documentation = documentation
         self._unit = unit
+        self._redis = aioredis.Redis(redis_connection)
 
         if not METRIC_NAME_RE.match(self._name):
             raise ValueError('Invalid metric name: ' + self._name)
@@ -115,7 +118,7 @@ class MetricWrapperBase(object):
         if self._is_observable():
             self._metric_init()
 
-    def labels(self, *labelvalues, **labelkwargs):
+    async def labels(self, *labelvalues, **labelkwargs):
         """Return the child for the given labelset.
 
         All metrics can have labels, allowing grouping of related time series.
@@ -168,6 +171,7 @@ class MetricWrapperBase(object):
                     labelvalues=labelvalues,
                     **self._kwargs
                 )
+                self._redis.sadd(f'{self._name}:{",".join(self._labelnames)}', ','.join(labelvalues))
             return self._metrics[labelvalues]
 
     def remove(self, *labelvalues):
@@ -190,8 +194,20 @@ class MetricWrapperBase(object):
     async def _multi_samples(self):
         with self._lock:
             metrics = self._metrics.copy()
+        members = await self._redis.smembers(f'{self._name}:{",".join(self._labelnames)}')
         result = []
-        for labels, metric in metrics.items():
+        for member in members:
+            labels = tuple(member.split(','))
+            if labels not in metrics:
+                self._metrics[labels] = self.__class__(
+                    self._name,
+                    documentation=self._documentation,
+                    labelnames=self._labelnames,
+                    unit=self._unit,
+                    labelvalues=labels,
+                    **self._kwargs
+                )
+            metric = metrics[labels]
             series_labels = list(zip(self._labelnames, labels))
             for suffix, sample_labels, value in await metric._samples():
                 result.append((suffix, dict(series_labels + list(sample_labels.items())), value))
