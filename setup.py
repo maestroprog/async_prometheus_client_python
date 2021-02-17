@@ -12,7 +12,7 @@ else:  # Assuming we don't run setup in order to publish under python 2.6
 
 setup(
     name="prometheus_client_async",
-    version="0.9.0-aioredis-3",
+    version="0.9.0-aioredis-4",
     author="Brian Brazil",
     author_email="brian.brazil@robustperception.io",
     description="Python client for the Prometheus monitoring system.",
@@ -22,10 +22,10 @@ setup(
     keywords="prometheus monitoring instrumentation client",
     url="https://github.com/prometheus/client_python",
     packages=[
-        'prometheus_client',
-        'prometheus_client.bridge',
-        'prometheus_client.openmetrics',
-        'prometheus_client.twisted',
+        'prometheus_client_async',
+        'prometheus_client_async.bridge',
+        'prometheus_client_async.openmetrics',
+        'prometheus_client_async.twisted',
     ],
     extras_require={
         'twisted': ['twisted'],
