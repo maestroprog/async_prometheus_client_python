@@ -11,8 +11,8 @@ else:  # Assuming we don't run setup in order to publish under python 2.6
 
 
 setup(
-    name="prometheus_client",
-    version="0.9.0-aioredis-2",
+    name="prometheus_client_async",
+    version="0.9.0-aioredis-3",
     author="Brian Brazil",
     author_email="brian.brazil@robustperception.io",
     description="Python client for the Prometheus monitoring system.",
