@@ -46,7 +46,7 @@ def RedisValueBuilder():
             await redis.set(self._redis_key, value)
 
         async def get(self):
-            return await redis.get(self._redis_key) or 0.0
+            return float(await redis.get(self._redis_key) or 0.0)
 
     return RedisValue
 

@@ -194,12 +194,12 @@ class MetricWrapperBase(object):
     async def _multi_samples(self):
         with self._lock:
             metrics = self._metrics.copy()
-        members = await self._redis.smembers(f'{self._name}:{",".join(self._labelnames)}')
+        members = await self._redis.smembers(f'{self._name}:{",".join(self._labelnames)}', encoding='utf-8')
         result = []
         for member in members:
             labels = tuple(member.split(','))
             if labels not in metrics:
-                self._metrics[labels] = self.__class__(
+                metrics[labels] = self._metrics[labels] = self.__class__(
                     self._name,
                     documentation=self._documentation,
                     labelnames=self._labelnames,
