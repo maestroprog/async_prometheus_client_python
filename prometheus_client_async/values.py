@@ -40,7 +40,7 @@ def RedisValueBuilder():
             self._redis_key = f'{name}:{",".join(label + "=" + labelvalues[i] for i, label in enumerate(labelnames))}'
 
         async def inc(self, amount):
-            await redis.incrby(self._redis_key, amount)
+            await redis.incrbyfloat(self._redis_key, float(amount))
 
         async def set(self, value):
             await redis.set(self._redis_key, value)
