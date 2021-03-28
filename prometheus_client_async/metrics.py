@@ -171,7 +171,7 @@ class MetricWrapperBase(object):
                     labelvalues=labelvalues,
                     **self._kwargs
                 )
-                self._redis.sadd(f'{self._name}:{",".join(self._labelnames)}', ','.join(labelvalues))
+            await self._redis.sadd(f'{self._name}:{",".join(self._labelnames)}', ','.join(labelvalues))
             return self._metrics[labelvalues]
 
     def remove(self, *labelvalues):
@@ -288,7 +288,7 @@ class Counter(MetricWrapperBase):
             val = await val
         return (
             ('_total', {}, val),
-            ('_created', {}, self._created),
+            # ('_created', {}, self._created),
         )
 
 
@@ -487,7 +487,8 @@ class Summary(MetricWrapperBase):
         return (
             ('_count', {}, val1),
             ('_sum', {}, val2),
-            ('_created', {}, self._created))
+            # ('_created', {}, self._created),
+        )
 
 
 class Histogram(MetricWrapperBase):
@@ -611,7 +612,7 @@ class Histogram(MetricWrapperBase):
             if isinstance(val, Awaitable):
                 val = await val
             samples.append(('_sum', {}, val))
-        samples.append(('_created', {}, self._created))
+        # samples.append(('_created', {}, self._created))
         return tuple(samples)
 
 
@@ -638,17 +639,22 @@ class Info(MetricWrapperBase):
         self._lock = Lock()
         self._value = {}
 
-    def info(self, val):
+    async def info(self, val):
         """Set info metric."""
         if self._labelname_set.intersection(val.keys()):
             raise ValueError('Overlapping labels for Info metric, metric: %s child: %s' % (
                 self._labelnames, val))
         with self._lock:
+            for key, value in dict(val).items():
+                await self._redis.hset(self._name, key, value)
             self._value = dict(val)
 
-    def _child_samples(self):
+    async def _child_samples(self):
         with self._lock:
-            return (('_info', self._value, 1.0,),)
+            try:
+                return (('_info', await self._redis.hgetall(self._labelname_set, encoding='utf-8'), 1.0,),)
+            except:
+                return (('_info', self._value, 1.0,),)
 
 
 class Enum(MetricWrapperBase):
