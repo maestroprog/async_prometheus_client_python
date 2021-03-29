@@ -171,7 +171,7 @@ class MetricWrapperBase(object):
                     labelvalues=labelvalues,
                     **self._kwargs
                 )
-            await self._redis.sadd(f'{self._name}:{",".join(self._labelnames)}', ','.join(labelvalues))
+            self._redis.sadd(f'{self._name}:{",".join(self._labelnames)}', ','.join(labelvalues))
             return self._metrics[labelvalues]
 
     def remove(self, *labelvalues):
